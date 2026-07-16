@@ -355,8 +355,8 @@ body.pre-auth #sidebar,body.pre-auth main{display:none}
 <script>
 // ===== Configuração Supabase — preencha com o projeto NOVO do Conviver Pay =====
 // Veja SETUP.md para o passo a passo (criar projeto, rodar schema.sql, pegar essas duas chaves).
-const SB_URL='COLE_AQUI_A_PROJECT_URL';
-const SB_ANON='COLE_AQUI_A_ANON_PUBLIC_KEY';
+const SB_URL='https://uzbkxrelqjmhtmvbjfds.supabase.co';
+const SB_ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6Ymt4cmVscWptaHRtdmJqZmRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNTk2NDAsImV4cCI6MjA5OTczNTY0MH0.gLt2U8CZZsO71e-YGrlXGXWCnth_D5w_fxwKzPskHXg';
 const SB_CONFIGURED = SB_URL.startsWith('http') && SB_ANON.length>20;
 const sb = SB_CONFIGURED ? window.supabase.createClient(SB_URL,SB_ANON) : null;
 const SB_TABLES={coligadas:'coligadas',empreendimentos:'empreendimentos',responsaveis:'responsaveis',lancamentos:'lancamentos',pagadoria:'pagadoria'};
