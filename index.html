@@ -312,6 +312,10 @@ body.pre-auth #sidebar,body.pre-auth main{display:none}
     <button class="data-btn" onclick="exportData()">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
       Exportar backup (.json)</button>
+    <button class="data-btn" onclick="document.getElementById('importFile').click()">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 9l5-5 5 5M12 4v12"/></svg>
+      Importar dados</button>
+    <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
   </div>
   <div class="side-foot">
     <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">
@@ -1151,13 +1155,30 @@ function delResp(id){
   DATA.responsaveis=DATA.responsaveis.filter(x=>x.id!==id);persist();renderSettings();toast('Excluído ✓');
 }
 
-// ===== Exportar backup =====
+// ===== Exportar / importar backup =====
 function exportData(){
   const blob=new Blob([JSON.stringify(DATA,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);const a=document.createElement('a');
   const d=new Date(),pad=n=>String(n).padStart(2,'0');
   a.href=url;a.download='conviver-pay-backup-'+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'.json';
   a.click();URL.revokeObjectURL(url);
+}
+function importData(ev){
+  const file=ev.target.files[0];if(!file)return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const incoming=JSON.parse(r.result);
+      if(!confirm('Isso substitui os dados atuais do Conviver Pay pelo conteúdo do arquivo importado (lançamentos, pagadoria, configurações e histórico). Continuar?')){ev.target.value='';return;}
+      ['lancamentos','empreendimentos','coligadas','responsaveis','pagadoria','lancamentos_historico'].forEach(k=>{
+        DATA[k]=Array.isArray(incoming[k])?incoming[k]:[];
+      });
+      persist();switchTab(current);
+      toast('Dados importados ✓ (sincronizando com o Supabase…)');
+    }catch(e){console.error(e);toast('Erro ao ler o arquivo. Confira se é um .json válido.',true);}
+    ev.target.value='';
+  };
+  r.readAsText(file);
 }
 
 // ===== Autenticação e carregamento do Supabase =====
