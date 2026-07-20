@@ -37,9 +37,11 @@ create table if not exists lancamentos (
   titulo                text not null,
   empreendimento        text,
 
-  -- identificadores usados para casar com a planilha da Pagadoria
-  numero_oc             text not null,
-  numero_atividade      text not null,
+  -- identificadores usados para casar com a planilha da Pagadoria.
+  -- ficam em branco ('') enquanto o lançamento está "A lançar" — só passam a existir
+  -- quando a OC é criada de fato, momento em que o app já move o status sozinho.
+  numero_oc             text not null default '',
+  numero_atividade      text not null default '',
 
   -- dados do fornecedor (preenchidos manualmente ou via consulta de CNPJ)
   fornecedor            text,           -- razão social
@@ -80,13 +82,22 @@ create table if not exists lancamentos (
   checklist              jsonb not null default '[]'::jsonb,
 
   created_at            timestamptz not null default now(),
-  updated_at            timestamptz not null default now(),
-
-  constraint lancamentos_oc_atividade_uniq unique (numero_oc, numero_atividade)
+  updated_at            timestamptz not null default now()
 );
 
+-- Bloco abaixo é seguro rodar tanto numa tabela nova quanto numa já existente de uma
+-- versão anterior deste schema.sql (quando numero_oc/numero_atividade eram NOT NULL sem
+-- default e tinham uma constraint única simples, sem permitir dois lançamentos em branco).
+alter table lancamentos alter column numero_oc set default '';
+alter table lancamentos alter column numero_atividade set default '';
+update lancamentos set numero_oc='' where numero_oc is null;
+update lancamentos set numero_atividade='' where numero_atividade is null;
+alter table lancamentos drop constraint if exists lancamentos_oc_atividade_uniq;
+
 create index if not exists idx_lancamentos_status on lancamentos(status);
-create index if not exists idx_lancamentos_oc_ativ on lancamentos(numero_oc, numero_atividade);
+-- únicos só quando preenchidos: vários lançamentos "A lançar" podem ter OC/Atividade em branco ao mesmo tempo
+create unique index if not exists idx_lancamentos_oc_ativ_uniq on lancamentos(numero_oc, numero_atividade)
+  where numero_oc <> '' and numero_atividade <> '';
 
 -- histórico/auditoria de mudanças automáticas (via importação da Pagadoria)
 create table if not exists lancamentos_historico (
@@ -137,6 +148,15 @@ alter table responsaveis          enable row level security;
 alter table lancamentos           enable row level security;
 alter table lancamentos_historico enable row level security;
 alter table pagadoria             enable row level security;
+
+-- "create policy" não tem "if not exists" no Postgres, então derruba antes de recriar
+-- (deixa o script inteiro seguro pra rodar de novo sem dar erro de policy duplicada)
+drop policy if exists "auth full access" on coligadas;
+drop policy if exists "auth full access" on empreendimentos;
+drop policy if exists "auth full access" on responsaveis;
+drop policy if exists "auth full access" on lancamentos;
+drop policy if exists "auth full access" on lancamentos_historico;
+drop policy if exists "auth full access" on pagadoria;
 
 create policy "auth full access" on coligadas             for all to authenticated using (true) with check (true);
 create policy "auth full access" on empreendimentos       for all to authenticated using (true) with check (true);

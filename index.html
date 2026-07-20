@@ -668,8 +668,9 @@ function renderLancModal(){
   const statusOpts=LANC_COLUMNS.map(c=>({v:c,l:LANC_LABELS[c]}));
   const html=
     field('lTitulo','Título do lançamento',d.titulo,{full:true,req:true,ph:'Ex: Patrocínio Junina Babaçu'})+
-    field('lOc','Número da OC',d.numero_oc,{req:true,ph:'Ex: 0000497'})+
-    field('lAtiv','Número da Atividade',d.numero_atividade,{req:true,ph:'Ex: 1252762'})+
+    field('lOc','Número da OC',d.numero_oc,{ph:'Ex: 0000497 (preencha quando for lançado)'})+
+    field('lAtiv','Número da Atividade',d.numero_atividade,{ph:'Ex: 1252762 (busca sozinho pela OC)'})+
+    '<div class="field full" id="lAtivHintWrap" style="margin-top:-8px"><span id="lAtivHint" style="font-size:11.5px;color:var(--amber)"></span></div>'+
     field('lEmp','Empreendimento',d.empreendimento,{type:'select',options:empOpts})+
     field('lPrior','Prioridade',d.prioridade,{type:'select',options:[{v:'alta',l:'Alta'},{v:'media',l:'Média'},{v:'baixa',l:'Baixa'}]})+
     '<div class="section-div">Fornecedor<span class="ln"></span></div>'+
@@ -721,10 +722,20 @@ function renderLancModal(){
   if(dataSolEl)dataSolEl.addEventListener('change',()=>{
     if(dataSolEl.value)document.getElementById('lDataLim').value=addBusinessDays(dataSolEl.value,15);
   });
+  const ocEl=document.getElementById('lOc');
+  if(ocEl)ocEl.addEventListener('change',()=>{
+    const oc=ocEl.value.trim();if(!oc)return;
+    const ativEl=document.getElementById('lAtiv');
+    const matches=[...new Set((DATA.pagadoria||[]).filter(p=>p.oc===oc).map(p=>p.atividade))];
+    if(matches.length===1&&!ativEl.value.trim()){ativEl.value=matches[0];toast('Atividade preenchida a partir da Pagadoria ✓');}
+    else if(matches.length>1){document.getElementById('lAtivHint').textContent='Essa OC tem '+matches.length+' atividades na Pagadoria: '+matches.join(', ');}
+    else{document.getElementById('lAtivHint').textContent='';}
+  });
 }
 const HIST_TIPO_LABEL={
   automatico_importacao:'Automático (importação da planilha)',
   automatico_tempo:'Automático (prazo de 20 dias)',
+  automatico_oc:'Automático (OC preenchida)',
   manual_vinculo:'Automático (OC/Atividade vinculada ao salvar)',
   migracao:'Migração do Conviver Events',
   manual:'Manual'
@@ -823,10 +834,12 @@ function saveLanc(){
   const g=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
   const titulo=g('lTitulo'),oc=g('lOc'),ativ=g('lAtiv');
   if(!titulo){toast('Digite o título do lançamento.',true);return;}
-  if(!oc){toast('Número da OC é obrigatório.',true);return;}
-  if(!ativ){toast('Número da Atividade é obrigatório.',true);return;}
-  const dup=DATA.lancamentos.find(l=>l.numero_oc===oc&&l.numero_atividade===ativ&&l.id!==lancEditId);
-  if(dup){toast('Já existe um lançamento com essa OC + Atividade: "'+dup.titulo+'".',true);return;}
+  // OC/Atividade não são obrigatórios enquanto o lançamento está "A lançar" — só exige os dois juntos, nunca um sozinho
+  if((oc&&!ativ)||(!oc&&ativ)){toast('Preencha a OC e a Atividade juntas, ou deixe as duas em branco.',true);return;}
+  if(oc&&ativ){
+    const dup=DATA.lancamentos.find(l=>l.numero_oc===oc&&l.numero_atividade===ativ&&l.id!==lancEditId);
+    if(dup){toast('Já existe um lançamento com essa OC + Atividade: "'+dup.titulo+'".',true);return;}
+  }
   const d={
     titulo,numero_oc:oc,numero_atividade:ativ,
     empreendimento:g('lEmp'),prioridade:g('lPrior'),
@@ -840,19 +853,27 @@ function saveLanc(){
     data_solicitacao:g('lDataSol'),data_limite:g('lDataLim'),observacoes:g('lObs'),
     checklist:draftChecklist
   };
+  // ter OC+Atividade preenchidas significa que o lançamento já foi lançado — sai de "A lançar" direto pra "Enviado p/ pagadoria"
+  let promovido=false;
+  if(d.status==='rascunho'&&oc&&ativ){d.status='enviado_pagadoria';promovido=true;}
   let it,ocMudou;
   if(lancEditId){
     it=DATA.lancamentos.find(l=>l.id===lancEditId);
     ocMudou=(it.numero_oc!==oc||it.numero_atividade!==ativ);
     const deStatus=it.status;
     Object.assign(it,d,{requer_atencao:lancDraft.requer_atencao,requer_atencao_motivo:lancDraft.requer_atencao_motivo});
-    if(deStatus!==d.status)logHistorico(it.id,deStatus,d.status,'manual','Editado manualmente');
+    if(deStatus!==d.status){
+      logHistorico(it.id,deStatus,d.status,promovido?'automatico_oc':'manual',
+        promovido?'OC/Atividade preenchidos — saiu de "A lançar" automaticamente':'Editado manualmente');
+    }
     toast('Lançamento salvo ✓');
   }else{
     it=Object.assign({id:uid('lan'),created_at:new Date().toISOString(),requer_atencao:lancDraft.requer_atencao,requer_atencao_motivo:lancDraft.requer_atencao_motivo},d);
-    DATA.lancamentos.push(it);ocMudou=true;toast('Lançamento criado ✓');
+    DATA.lancamentos.push(it);ocMudou=true;
+    if(promovido)logHistorico(it.id,'rascunho','enviado_pagadoria','automatico_oc','OC/Atividade preenchidos ao criar — saiu de "A lançar" automaticamente');
+    toast('Lançamento criado ✓');
   }
-  if(ocMudou){
+  if(ocMudou&&oc&&ativ){
     // marcação de pendência de OC (migração/duplicidade) some assim que o OC/Atividade mudam — reavalia contra a Pagadoria
     if(it.requer_atencao&&/migra[cç][aã]o|mais de uma oc/i.test(it.requer_atencao_motivo||'')){
       it.requer_atencao=false;it.requer_atencao_motivo='';
