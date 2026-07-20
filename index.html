@@ -436,7 +436,7 @@ async function runSync(){
 async function refreshData(){
   if(_dirty||_syncing){if(!confirm('Há uma alteração sendo salva. Atualizar agora pode sobrescrever o que você acabou de mudar localmente. Continuar?'))return;}
   const btn=document.getElementById('refreshBtn');btn.disabled=true;btn.textContent='⟲ Atualizando…';
-  try{await loadFromSupabase();switchTab(current);toast('Dados atualizados ✓');}
+  try{await loadFromSupabase();checkPagamentoProgramadoExpirado();switchTab(current);toast('Dados atualizados ✓');}
   catch(e){toast('Erro ao atualizar: '+(e&&e.message?e.message:e),true);}
   finally{btn.disabled=false;btn.textContent='⟲ Atualizar';}
 }
@@ -501,9 +501,9 @@ async function logHistorico(lancamento_id,de,para,tipo,motivo,ocPlan,ativPlan){
 
 // ===== NAV / TABS =====
 const TAB_META={
-  lancamentos:{title:'Lançamentos',sub:'Pagamentos a lançar e em andamento — arraste os cards entre as colunas'},
-  pagadoria:{title:'Pagadoria',sub:'Importe a planilha para acompanhar e atualizar os lançamentos automaticamente'},
-  config:{title:'Configurações',sub:'Coligadas, empreendimentos e responsáveis usados em Lançamentos e Pagadoria'}
+  lancamentos:{title:'Lançamentos',sub:'Pagamentos a lançar e em andamento — arraste os cards entre as colunas',ph:'Buscar…'},
+  pagadoria:{title:'Pagadoria',sub:'Importe a planilha para acompanhar e atualizar os lançamentos automaticamente',ph:'Buscar descrição, fornecedor, OC…'},
+  config:{title:'Configurações',sub:'Coligadas, empreendimentos e responsáveis usados em Lançamentos e Pagadoria',ph:'Buscar…'}
 };
 function switchTab(tab){
   current=tab;
@@ -512,6 +512,7 @@ function switchTab(tab){
   document.getElementById('boardSub').textContent=TAB_META[tab].sub;
   document.getElementById('headTools').style.display = tab==='config' ? 'none' : 'flex';
   document.getElementById('search').value='';
+  document.getElementById('search').placeholder=TAB_META[tab].ph;
   renderView();
 }
 function renderView(){
@@ -693,7 +694,7 @@ function renderLancModal(){
     field('lConta','Conta',d.conta,{})+
     field('lPix','PIX',d.pix,{})+
     '<div class="section-div">Financeiro<span class="ln"></span></div>'+
-    field('lValor','Valor total (R$)',d.valor,{type:'number'})+
+    field('lValor','Valor total (R$)',moneyToInputStr(d.valor),{ph:'0,00'})+
     field('lForma','Forma de pagamento',d.forma_pagamento,{type:'select',options:[{v:'',l:'— selecione —'}].concat(FORMAS.map(f=>({v:f,l:f})))})+
     field('lParcAtual','Parcela atual',d.parcela_atual,{type:'number'})+
     field('lParcTotal','Total de parcelas',d.total_parcelas,{type:'number'})+
@@ -714,15 +715,28 @@ function renderLancModal(){
   renderChecklist();
   const cnpjEl=document.getElementById('lCnpj');
   if(cnpjEl)cnpjEl.addEventListener('input',()=>{cnpjEl.value=maskCNPJ(cnpjEl.value);});
+  const valorEl=document.getElementById('lValor');
+  if(valorEl)valorEl.addEventListener('input',()=>{valorEl.value=maskMoney(valorEl.value);});
+  const dataSolEl=document.getElementById('lDataSol');
+  if(dataSolEl)dataSolEl.addEventListener('change',()=>{
+    if(dataSolEl.value)document.getElementById('lDataLim').value=addBusinessDays(dataSolEl.value,15);
+  });
 }
+const HIST_TIPO_LABEL={
+  automatico_importacao:'Automático (importação da planilha)',
+  automatico_tempo:'Automático (prazo de 20 dias)',
+  manual_vinculo:'Automático (OC/Atividade vinculada ao salvar)',
+  migracao:'Migração do Conviver Events',
+  manual:'Manual'
+};
 function renderHistoricoBox(){
   if(!lancEditId)return'';
   const items=(DATA.lancamentos_historico||[]).filter(h=>h.lancamento_id===lancEditId).sort((a,b)=>(b.data||'').localeCompare(a.data||''));
   if(!items.length)return'';
-  return '<div class="hist-box"><label>Histórico de mudanças automáticas</label>'+
+  return '<div class="hist-box"><label>Histórico de mudanças</label>'+
     items.map(h=>'<div class="hist-item"><b>'+esc(LANC_LABELS[h.de_status]||h.de_status||'—')+' → '+esc(LANC_LABELS[h.para_status]||h.para_status||'—')+'</b>'+
       (h.motivo?' — '+esc(h.motivo):'')+
-      '<div class="hd">'+esc(h.tipo==='automatico_importacao'?'Automático (importação)':'Manual')+' · '+(h.usuario?esc(h.usuario)+' · ':'')+fmtDateTime(h.data)+'</div></div>').join('');
+      '<div class="hd">'+esc(HIST_TIPO_LABEL[h.tipo]||h.tipo||'—')+' · '+(h.usuario?esc(h.usuario)+' · ':'')+fmtDateTime(h.data)+'</div></div>').join('');
 }
 function fmtDateTime(iso){if(!iso)return'';const d=new Date(iso);if(isNaN(d))return iso;
   return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
@@ -751,6 +765,28 @@ function maskCNPJ(v){
     .replace(/^(\d{2})\.(\d{3})(\d)/,'$1.$2.$3')
     .replace(/\.(\d{3})(\d)/,'.$1/$2')
     .replace(/(\d{4})(\d)/,'$1-$2');
+}
+function maskMoney(v){
+  const digits=(v||'').replace(/\D/g,'');
+  if(!digits)return'';
+  return (parseInt(digits,10)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function unmaskMoney(v){
+  if(!v)return 0;
+  return parseFloat(String(v).replace(/\./g,'').replace(',','.'))||0;
+}
+function moneyToInputStr(v){
+  return v?Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+}
+function addBusinessDays(dateStr,days){
+  const d=new Date(dateStr+'T00:00:00');let added=0;
+  while(added<days){
+    d.setDate(d.getDate()+1);
+    const dow=d.getDay();
+    if(dow!==0&&dow!==6)added++;
+  }
+  const pad=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 }
 async function consultarCNPJ(){
   const inp=document.getElementById('lCnpj');const raw=(inp.value||'').replace(/\D/g,'');
@@ -798,21 +834,30 @@ function saveLanc(){
     endereco:g('lEndereco'),numero_endereco:g('lNumero'),bairro:g('lBairro'),cep:g('lCep'),
     forn_cidade:g('lCidade'),forn_estado:g('lEstado'),telefone:g('lTelefone'),email:g('lEmail'),
     banco:g('lBanco'),agencia:g('lAgencia'),conta:g('lConta'),pix:g('lPix'),
-    valor:parseFloat(g('lValor'))||0,forma_pagamento:g('lForma'),
+    valor:unmaskMoney(g('lValor')),forma_pagamento:g('lForma'),
     parcela_atual:parseInt(g('lParcAtual'))||null,total_parcelas:parseInt(g('lParcTotal'))||null,
     responsavel:g('lResp'),status:g('lStatus'),
     data_solicitacao:g('lDataSol'),data_limite:g('lDataLim'),observacoes:g('lObs'),
     checklist:draftChecklist
   };
+  let it,ocMudou;
   if(lancEditId){
-    const it=DATA.lancamentos.find(l=>l.id===lancEditId);
+    it=DATA.lancamentos.find(l=>l.id===lancEditId);
+    ocMudou=(it.numero_oc!==oc||it.numero_atividade!==ativ);
     const deStatus=it.status;
     Object.assign(it,d,{requer_atencao:lancDraft.requer_atencao,requer_atencao_motivo:lancDraft.requer_atencao_motivo});
     if(deStatus!==d.status)logHistorico(it.id,deStatus,d.status,'manual','Editado manualmente');
     toast('Lançamento salvo ✓');
   }else{
-    const it=Object.assign({id:uid('lan'),created_at:new Date().toISOString(),requer_atencao:false,requer_atencao_motivo:''},d);
-    DATA.lancamentos.push(it);toast('Lançamento criado ✓');
+    it=Object.assign({id:uid('lan'),created_at:new Date().toISOString(),requer_atencao:lancDraft.requer_atencao,requer_atencao_motivo:lancDraft.requer_atencao_motivo},d);
+    DATA.lancamentos.push(it);ocMudou=true;toast('Lançamento criado ✓');
+  }
+  if(ocMudou){
+    // marcação de pendência de OC (migração/duplicidade) some assim que o OC/Atividade mudam — reavalia contra a Pagadoria
+    if(it.requer_atencao&&/migra[cç][aã]o|mais de uma oc/i.test(it.requer_atencao_motivo||'')){
+      it.requer_atencao=false;it.requer_atencao_motivo='';
+    }
+    aplicarAutomacaoPagadoria(it,'manual_vinculo');
   }
   persist();closeLanc();render();
 }
@@ -878,6 +923,51 @@ function statusTrigger(atend,mov){
   if(a==='cancelado'||m==='bloqueado'||m==='cancelado')return'atencao';
   return null;
 }
+// casa um lançamento com a linha correspondente da Pagadoria (por OC+Atividade) e aplica a automação de status.
+// usado tanto na importação da planilha quanto ao salvar um lançamento com OC/Atividade novos.
+function aplicarAutomacaoPagadoria(lanc,origem){
+  const p=(DATA.pagadoria||[]).find(x=>x.oc===lanc.numero_oc&&x.atividade===lanc.numero_atividade);
+  if(!p)return null;
+  if(lanc.status==='pago'||lanc.status==='cancelado')return null;
+  const trig=statusTrigger(p.status_atendimento,p.status_movimento);
+  const motivoBase='STATUS ATENDIMENTO: "'+p.status_atendimento+'" · STATUS MOVIMENTO: "'+p.status_movimento+'" (OC '+p.oc+'/'+p.atividade+')';
+  if(trig==='programado'){
+    let mudou=false;
+    if(lanc.status!=='pagamento_programado'){
+      const de=lanc.status;lanc.status='pagamento_programado';
+      logHistorico(lanc.id,de,'pagamento_programado',origem,'Casado com a Pagadoria — '+motivoBase,p.oc,p.atividade);
+      mudou=true;
+    }
+    if(lanc.requer_atencao){lanc.requer_atencao=false;lanc.requer_atencao_motivo='';mudou=true;}
+    return mudou?'programado':null;
+  }
+  if(trig==='atencao'){
+    if(!lanc.requer_atencao){
+      lanc.requer_atencao=true;lanc.requer_atencao_motivo=motivoBase;
+      logHistorico(lanc.id,lanc.status,lanc.status,origem,'Marcado como Requer atenção — '+motivoBase,p.oc,p.atividade);
+      return'atencao';
+    }
+    return null;
+  }
+  return null;
+}
+// move lançamentos "Pagamento Programado" há 20+ dias corridos automaticamente para Pago
+function checkPagamentoProgramadoExpirado(){
+  const agora=Date.now();let movidos=0;
+  (DATA.lancamentos||[]).forEach(it=>{
+    if(it.status!=='pagamento_programado')return;
+    const entradas=(DATA.lancamentos_historico||[]).filter(h=>h.lancamento_id===it.id&&h.para_status==='pagamento_programado');
+    if(!entradas.length)return;
+    const ultima=entradas.reduce((a,b)=>(a.data>b.data?a:b));
+    const dias=(agora-new Date(ultima.data).getTime())/86400000;
+    if(dias>=20){
+      it.status='pago';
+      logHistorico(it.id,'pagamento_programado','pago','automatico_tempo','20 dias corridos desde que entrou em Pagamento Programado (em '+fmtDateTime(ultima.data)+')');
+      movidos++;
+    }
+  });
+  if(movidos){persist();toast(movidos+' lançamento(s) movido(s) automaticamente para Pago (20 dias em Pagamento Programado) ✓');}
+}
 function importPagadoria(ev){
   const file=ev.target.files[0];if(!file)return;
   const r=new FileReader();
@@ -926,25 +1016,10 @@ function importPagadoria(ev){
 
         const lanc=DATA.lancamentos.find(l=>l.numero_oc===oc&&l.numero_atividade===ativ);
         if(!lanc){semMatch++;return;}
-        if(lanc.status==='pago'||lanc.status==='cancelado')return;
-        const trig=statusTrigger(reg.status_atendimento,reg.status_movimento);
-        if(trig==='programado'){
-          if(lanc.status!=='pagamento_programado'){
-            const de=lanc.status;lanc.status='pagamento_programado';
-            logHistorico(lanc.id,de,'pagamento_programado','automatico_importacao',
-              'Planilha: STATUS ATENDIMENTO="'+reg.status_atendimento+'" · STATUS MOVIMENTO="'+reg.status_movimento+'"',oc,ativ);
-            movidos++;
-          }
-          if(lanc.requer_atencao){lanc.requer_atencao=false;lanc.requer_atencao_motivo='';}
-        }else if(trig==='atencao'){
-          if(!lanc.requer_atencao){
-            lanc.requer_atencao=true;
-            lanc.requer_atencao_motivo='STATUS ATENDIMENTO: "'+reg.status_atendimento+'" · STATUS MOVIMENTO: "'+reg.status_movimento+'" (importado em '+fmtDate(new Date().toISOString())+')';
-            logHistorico(lanc.id,lanc.status,lanc.status,'automatico_importacao','Marcado como Requer atenção — '+lanc.requer_atencao_motivo,oc,ativ);
-            marcados++;
-          }
-        }
+        const res=aplicarAutomacaoPagadoria(lanc,'automatico_importacao');
+        if(res==='programado')movidos++;else if(res==='atencao')marcados++;
       });
+      checkPagamentoProgramadoExpirado();
       persist();renderPagadoria();renderLanc();
       toast('Planilha importada: '+novos+' novos, '+atualizados+' atualizados · '+movidos+' movidos p/ Pagamento Programado · '+marcados+' marcados Requer atenção'+(semMatch?' · '+semMatch+' sem lançamento correspondente':''));
     }catch(e){console.error(e);toast('Erro ao ler a planilha. Confira se é o .xlsx correto.',true);}
@@ -952,10 +1027,11 @@ function importPagadoria(ev){
   };
   r.readAsArrayBuffer(file);
 }
-let pagFilters={emp:'',forn:'',mov:'',busca:''};
+let pagFilters={emp:'',forn:'',mov:''};
 function renderPagadoria(){
   updateCounts();
   const box=document.getElementById('pagwrap');if(!box)return;
+  const busca=(document.getElementById('search').value||'').trim();
   const todos=DATA.pagadoria||[];
   const upload='<div class="pag-upload"><div class="pu-txt"><b>Atualizar status dos pagamentos</b>'+
     '<span>Suba a planilha .xlsx exportada do sistema financeiro. Lançamentos com a mesma OC + Atividade são atualizados automaticamente.</span></div>'+
@@ -976,14 +1052,13 @@ function renderPagadoria(){
   if(pagFilters.emp)lista=lista.filter(p=>p.empreendimento===pagFilters.emp);
   if(pagFilters.forn)lista=lista.filter(p=>p.fornecedor===pagFilters.forn);
   if(pagFilters.mov)lista=lista.filter(p=>p.status_movimento===pagFilters.mov);
-  if(pagFilters.busca){const q=normText(pagFilters.busca);lista=lista.filter(p=>normText(p.historico+' '+p.fornecedor+' '+p.oc+' '+p.atividade).includes(q));}
+  if(busca){const q=normText(busca);lista=lista.filter(p=>normText(p.historico+' '+p.fornecedor+' '+p.oc+' '+p.atividade).includes(q));}
 
   const fbar='<div class="filterbar" style="padding:0 0 18px">'+
-    '<input class="search" style="width:200px" placeholder="Buscar descrição, fornecedor, OC…" value="'+esc(pagFilters.busca)+'" oninput="pagFilters.busca=this.value;renderPagadoria()">'+
     '<select class="fsel" onchange="pagFilters.emp=this.value;renderPagadoria()"><option value="">Todos empreend.</option>'+emps.map(e=>'<option '+(pagFilters.emp===e?'selected':'')+'>'+esc(e)+'</option>').join('')+'</select>'+
     '<select class="fsel" onchange="pagFilters.forn=this.value;renderPagadoria()"><option value="">Todos fornecedores</option>'+forns.map(e=>'<option '+(pagFilters.forn===e?'selected':'')+'>'+esc(e)+'</option>').join('')+'</select>'+
     '<select class="fsel" onchange="pagFilters.mov=this.value;renderPagadoria()"><option value="">Todos status movimento</option>'+movs.map(e=>'<option '+(pagFilters.mov===e?'selected':'')+'>'+esc(e)+'</option>').join('')+'</select>'+
-    ((pagFilters.emp||pagFilters.forn||pagFilters.mov||pagFilters.busca)?'<span class="fclear" onclick="clearPagFilters()">limpar filtros</span>':'')+
+    ((pagFilters.emp||pagFilters.forn||pagFilters.mov)?'<span class="fclear" onclick="clearPagFilters()">limpar filtros</span>':'')+
   '</div>';
 
   const atencaoN=lista.filter(p=>rowClass(p)==='atencao').length;
@@ -1030,7 +1105,7 @@ function renderPagadoria(){
   });
   box.innerHTML=upload+fbar+cards+body;
 }
-function clearPagFilters(){pagFilters={emp:'',forn:'',mov:'',busca:''};renderPagadoria();}
+function clearPagFilters(){pagFilters={emp:'',forn:'',mov:''};renderPagadoria();}
 
 // ===== CONFIGURAÇÕES =====
 let empEditId=null,colEditId=null;
@@ -1221,6 +1296,7 @@ async function startApp(){
   currentUserEmail=(session&&session.user&&session.user.email)||'';
   await loadFromSupabase();
   canPersist=true;setSave(true);
+  checkPagamentoProgramadoExpirado();
   hideLogin();
   try{switchTab('lancamentos');}catch(e){console.error('Render:',e);toast('Aviso ao renderizar: '+(e&&e.message?e.message:e),true);}
 }
