@@ -130,6 +130,7 @@ html[data-theme="dark"] .card.atencao{background:#3a3320;border-color:#9c8420}
 .chip.danger{background:rgba(239,68,68,.12);color:var(--red);border-color:rgba(239,68,68,.3)}
 .chip.warn{background:rgba(240,192,0,.15);color:#8a6d00;border-color:#f0c000}
 html[data-theme="dark"] .chip.warn{color:#f0c000}
+.chip.aprov{background:rgba(59,130,246,.12);color:var(--blue);border-color:rgba(59,130,246,.3)}
 .chip .cdot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
 .chip.val{color:var(--accent-deep);border-color:var(--accent);background:var(--accent-soft)}
 html[data-theme="dark"] .chip.val{color:var(--accent)}
@@ -230,6 +231,7 @@ html[data-theme="dark"] .pag-row.atencao{background:#3a2424}
 .atencao-box{grid-column:1/-1;background:rgba(240,192,0,.12);border:1px solid #f0c000;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#8a6d00;display:flex;gap:10px;align-items:flex-start}
 html[data-theme="dark"] .atencao-box{color:#f0c000}
 .atencao-box button{margin-left:auto;flex:0 0 auto}
+.aprov-box{grid-column:1/-1;background:rgba(59,130,246,.1);border:1px solid var(--blue);border-radius:10px;padding:12px 14px;font-size:12.5px;color:var(--blue);display:flex;gap:10px;align-items:flex-start}
 .checklist{grid-column:1/-1;border-top:1px solid var(--line);padding-top:16px;margin-top:2px}
 .checklist .cl-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
 .checklist .cl-head label{font-size:11px;font-weight:700;color:var(--ink-soft);letter-spacing:.3px;text-transform:uppercase}
@@ -451,7 +453,7 @@ const SB_COLS={
   lancamentos:['id','titulo','empreendimento','numero_oc','numero_atividade','fornecedor','nome_fantasia','cnpj','cnpj_norm',
     'endereco','numero_endereco','bairro','forn_cidade','forn_estado','cep','telefone','email','banco','agencia','conta','pix',
     'valor','forma_pagamento','parcela_atual','total_parcelas','prioridade','responsavel','data_solicitacao','data_limite',
-    'status','requer_atencao','requer_atencao_motivo','observacoes','checklist']
+    'status','requer_atencao','requer_atencao_motivo','aguardando_aprovacao_de','observacoes','checklist']
 };
 function cleanRow(table,row){
   const cols=SB_COLS[table];const out={};
@@ -585,6 +587,7 @@ function lancCardEl(it){
   const barColor=it.empreendimento?empColor(it.empreendimento):(PRIOR[it.prioridade]||'var(--ink-dim)');
   let chips='';
   if(it.requer_atencao)chips+='<span class="chip warn">⚠ Requer atenção</span>';
+  if(it.aguardando_aprovacao_de)chips+='<span class="chip aprov">⏳ Aguardando: '+esc(it.aguardando_aprovacao_de)+'</span>';
   if(it.empreendimento)chips+='<span class="chip"><span class="cdot" style="background:'+empColor(it.empreendimento)+'"></span>'+esc(it.empreendimento)+'</span>';
   if(it.numero_oc)chips+='<span class="chip">OC '+esc(it.numero_oc)+(it.numero_atividade?'/'+esc(it.numero_atividade):'')+'</span>';
   if(it.valor)chips+='<span class="chip val">R$ '+fmtMoney(it.valor)+'</span>';
@@ -634,7 +637,7 @@ function openLanc(id){
     endereco:'',numero_endereco:'',bairro:'',forn_cidade:'',forn_estado:'',cep:'',telefone:'',email:'',
     banco:'',agencia:'',conta:'',pix:'',valor:'',forma_pagamento:'',parcela_atual:'',total_parcelas:'',
     prioridade:'media',responsavel:'',data_solicitacao:'',data_limite:'',status:LANC_COLUMNS[0],
-    requer_atencao:false,requer_atencao_motivo:'',observacoes:''
+    requer_atencao:false,requer_atencao_motivo:'',aguardando_aprovacao_de:'',observacoes:''
   };
   draftChecklist=ex&&Array.isArray(ex.checklist)?JSON.parse(JSON.stringify(ex.checklist)):[];
   document.getElementById('lancModalTitle').textContent=ex?'Editar lançamento':'Novo lançamento';
@@ -705,6 +708,8 @@ function renderLancModal(){
     field('lDataLim','Data limite',d.data_limite,{type:'date'})+
     (d.requer_atencao?('<div class="atencao-box">⚠ <div><b>Requer atenção.</b> '+esc(d.requer_atencao_motivo||'')+'</div>'+
       '<button type="button" class="cl-mini" onclick="limparAtencao()">Limpar marcação</button></div>'):'')+
+    (d.aguardando_aprovacao_de?('<div class="aprov-box">⏳ <div><b>Aguardando aprovação de '+esc(d.aguardando_aprovacao_de)+'.</b> '+
+      'Vem do ATEND. RESP. da planilha da Pagadoria — some sozinho quando o STATUS ATENDIMENTO virar "Concluído Confirmado".</div></div>'):'')+
     field('lObs','Observações',d.observacoes,{full:true,type:'textarea'})+
     '<div class="checklist"><div class="cl-head"><label>Checklist / etapas</label>'+
       '<div class="cl-actions"><button type="button" class="cl-mini" onclick="applyModelo()">+ Modelo de pagamento</button></div></div>'+
@@ -948,8 +953,17 @@ function statusTrigger(atend,mov){
 // usado tanto na importação da planilha quanto ao salvar um lançamento com OC/Atividade novos.
 function aplicarAutomacaoPagadoria(lanc,origem){
   const p=(DATA.pagadoria||[]).find(x=>x.oc===lanc.numero_oc&&x.atividade===lanc.numero_atividade);
-  if(!p)return null;
-  if(lanc.status==='pago'||lanc.status==='cancelado')return null;
+  const fechado=lanc.status==='pago'||lanc.status==='cancelado';
+  if(!p){
+    if(!fechado&&lanc.aguardando_aprovacao_de){lanc.aguardando_aprovacao_de='';}
+    return null;
+  }
+  // indicador de quem falta aprovar (ATEND. RESP.) — some sozinho quando o atendimento é concluído ou cancelado
+  if(!fechado){
+    const atendResolvido=/concluido confirmado|cancelado/.test(normText(p.status_atendimento));
+    lanc.aguardando_aprovacao_de=atendResolvido?'':(p.responsavel||'');
+  }
+  if(fechado)return null;
   const trig=statusTrigger(p.status_atendimento,p.status_movimento);
   const motivoBase='STATUS ATENDIMENTO: "'+p.status_atendimento+'" · STATUS MOVIMENTO: "'+p.status_movimento+'" (OC '+p.oc+'/'+p.atividade+')';
   if(trig==='programado'){
